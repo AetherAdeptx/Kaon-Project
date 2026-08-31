@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+readonly LAB="$SCRIPT_DIR/kaon-lab"
+readonly CONTAINER="kaon-lab"
+readonly STORAGE_ROOT="${KAON_LAB_STORAGE_ROOT:-/var/mnt/Storage/KaonLab/podman}"
+readonly -a PODMAN=(podman --root "$STORAGE_ROOT")
+
+die() {
+    printf 'kaon-import: %s\n' "$*" >&2
+    exit 1
+}
+
+(($# == 2)) || die "usage: $0 HOST_SOURCE CONTAINER_DESTINATION"
+readonly source_path="$1"
+readonly destination="$2"
+[[ -e "$source_path" ]] || die "host source does not exist: $source_path"
+
+"$LAB" start
+if "${PODMAN[@]}" exec --user developer "$CONTAINER" test -e "$destination"; then
+    die "refusing to overwrite container destination: $destination"
+fi
+"${PODMAN[@]}" cp "$source_path" "$CONTAINER:$destination"
+"${PODMAN[@]}" exec --user developer "$CONTAINER" test -r "$destination" \
+    || die "imported path is not readable by developer"
+printf 'Imported %s to %s:%s\n' "$source_path" "$CONTAINER" "$destination"

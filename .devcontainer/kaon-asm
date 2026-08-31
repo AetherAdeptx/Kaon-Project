@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+readonly LAB="$SCRIPT_DIR/kaon-lab"
+
+die() {
+    printf 'kaon-asm: %s\n' "$*" >&2
+    exit 1
+}
+
+if (($# < 1 || $# > 3)); then
+    die "usage: $0 INPUT [OUTPUT] [FORMAT]"
+fi
+
+readonly input="$1"
+readonly output="${2:-${input%.*}.bin}"
+readonly format="${3:-bin}"
+[[ "$format" =~ ^[A-Za-z0-9_]+$ ]] || die "invalid NASM format '$format'"
+
+"$LAB" run test -f "$input" || die "input does not exist in /workspace: $input"
+if "$LAB" run test -e "$output"; then
+    die "refusing to overwrite existing output: $output"
+fi
+
+"$LAB" run nasm -f "$format" "$input" -o "$output"
+"$LAB" run stat -c '%s bytes: %n' "$output"
