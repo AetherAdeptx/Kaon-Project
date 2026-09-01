@@ -3,14 +3,6 @@ set -Eeuo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 
-# Stop the VM four hours after every boot so an abandoned development session
-# cannot continue consuming public IPv4 time indefinitely.
-systemd-run \
-    --unit=kaon-auto-shutdown \
-    --on-active=4h \
-    --timer-property=AccuracySec=1min \
-    /usr/sbin/poweroff
-
 # The Free Tier e2-micro has 1 GiB of RAM. A small swap file makes package
 # installation and occasional compiler/linker spikes more reliable.
 if [[ ! -e /swapfile ]]; then
@@ -38,6 +30,7 @@ apt-get install --yes --no-install-recommends \
     make \
     mtools \
     nasm \
+    nginx \
     qemu-system-x86 \
     qemu-utils \
     ripgrep \
@@ -58,6 +51,7 @@ EOF
 
 sshd -t
 systemctl reload ssh
+systemctl enable --now nginx
 
 install -d -m 0755 /var/lib/kaon
 date --iso-8601=seconds >/var/lib/kaon/provisioned-at
