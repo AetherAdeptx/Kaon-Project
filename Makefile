@@ -21,7 +21,8 @@ LDFLAGS := -m elf_x86_64 -nostdlib -z max-page-size=0x1000 \
 	-T $(LINKER_SCRIPT) -Map=$(BUILD_DIR)/Kaon.map
 
 KERNEL_SOURCES := $(KERNEL_DIR)/System.c $(KERNEL_DIR)/Console.c \
-	$(KERNEL_DIR)/Disk.c $(KERNEL_DIR)/Keyboard.c $(KERNEL_DIR)/Librarian.c \
+	$(KERNEL_DIR)/Disk.c $(KERNEL_DIR)/KaonInfo.c $(KERNEL_DIR)/Keyboard.c \
+	$(KERNEL_DIR)/Librarian.c \
 	$(KERNEL_DIR)/memory.c $(KERNEL_DIR)/serial.c $(KERNEL_DIR)/vga.c
 KERNEL_C_OBJECTS := $(patsubst $(KERNEL_DIR)/%.c,$(BUILD_DIR)/%.o,$(KERNEL_SOURCES))
 KERNEL_OBJECTS := $(BUILD_DIR)/Entry.o $(KERNEL_C_OBJECTS)

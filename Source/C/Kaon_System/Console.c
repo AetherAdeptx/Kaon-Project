@@ -2,6 +2,7 @@
 #include "Console.h"
 #include "Disk.h"
 #include "Globals.h"
+#include "KaonInfo.h"
 #include "Keyboard.h"
 #include "memory.h"
 #include "vga.h"
@@ -157,6 +158,32 @@ static void append_transcript_line(const ConsoleTextLine *line)
     console_state.transcript[destination_index] = *line;
 }
 
+void console_write_line(const ConsoleTextLine *line)
+{
+    if (console_state.initialized && line != NULL
+        && line->length <= CONSOLE_LINE_CAPACITY) {
+        append_transcript_line(line);
+        console_state.redraw_requested = true;
+    }
+}
+
+void console_write_text(const char *text)
+{
+    ConsoleTextLine line = {0};
+
+    if (text == NULL) {
+        return;
+    }
+
+    while (line.length < CONSOLE_LINE_CAPACITY
+           && text[line.length] != '\0') {
+        line.bytes[line.length] = (uint8_t)text[line.length];
+        ++line.length;
+    }
+
+    console_write_line(&line);
+}
+
 static void record_command(const ConsoleTextLine *command)
 {
     if (command->length == 0) {
@@ -264,6 +291,7 @@ static void finish_input_line(bool submit_command)
     append_transcript_line(&console_state.input);
     if (submit_command) {
         record_command(&console_state.input);
+        (void)kaon_info_execute(&console_state.input);
         (void)console_flush_history();
     }
 

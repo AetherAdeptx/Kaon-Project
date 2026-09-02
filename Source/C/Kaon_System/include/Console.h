@@ -60,6 +60,8 @@ bool console_set_user_name(const char *user_name);
 bool console_set_current_directory(const char *directory);
 void console_request_redraw(void);
 void console_update(void);
+void console_write_line(const ConsoleTextLine *line);
+void console_write_text(const char *text);
 bool console_flush_history(void);
 bool console_get_history_entry(size_t newest_first_index,
                                ConsoleTextLine *entry);
