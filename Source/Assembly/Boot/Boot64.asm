@@ -12,15 +12,30 @@ BOOTLOADER_START_ADDRESS equ 0x7C00
 BOOTLOADER_SIZE          equ 512
 BOOTLOADER_END_ADDRESS   equ BOOTLOADER_START_ADDRESS + BOOTLOADER_SIZE
 
-; Start at 1 MiB to avoid VGA, BIOS, and ROM address ranges in low memory.
-SYSTEM_BUFFER_ADDRESS    equ 0x100000
-SYSTEM_BUFFER_SIZE       equ 0x200000
-SYSTEM_START_ADDRESS     equ SYSTEM_BUFFER_ADDRESS + SYSTEM_BUFFER_SIZE
+; The BIOS loads the freestanding C kernel here before long mode is enabled.
+; A BIOS extended read cannot cross a 64 KiB boundary, so the build limits the
+; initial kernel image to 127 sectors. A later storage driver can remove this
+; bootstrap limitation.
+SYSTEM_START_ADDRESS     equ 0x10000
 
-; Keep the page tables below the stack and outside the system buffer.
+; Keep early boot allocations in the first 8 MiB. Librarian owns the next
+; contiguous 256 MiB once the C kernel validates this handoff.
+MEBIBYTE                 equ 0x100000
+HUGE_PAGE_SIZE           equ 2 * MEBIBYTE
+SMALL_PAGE_SIZE          equ 0x1000
+BOOT_MEMORY_BASE         equ 0
+BOOT_MEMORY_SIZE         equ 8 * MEBIBYTE
+LIBRARIAN_MEMORY_BASE    equ BOOT_MEMORY_BASE + BOOT_MEMORY_SIZE
+LIBRARIAN_MEMORY_SIZE    equ 256 * MEBIBYTE
+BOOT_HUGE_PAGE_COUNT     equ BOOT_MEMORY_SIZE / HUGE_PAGE_SIZE
+LIBRARIAN_SMALL_PAGES    equ LIBRARIAN_MEMORY_SIZE / SMALL_PAGE_SIZE
+LIBRARIAN_PAGE_TABLES    equ LIBRARIAN_SMALL_PAGES / 512
+
+; Keep the page tables below both the boot stack and the kernel.
 PML4_ADDRESS             equ 0x1000
 PDPT_ADDRESS             equ 0x2000
 PAGE_DIRECTORY_ADDRESS   equ 0x3000
+LIBRARIAN_TABLES_ADDRESS equ 0x100000
 
 SERIAL_PORT              equ 0x3F8
 
@@ -34,24 +49,23 @@ SERIAL_PORT              equ 0x3F8
 
 start:
     cli
+    cld
 
     xor ax, ax
     mov ds, ax
     mov es, ax
     mov ss, ax
     mov sp, STACK_TOP_ADDRESS
+    mov [boot_drive], dl
 
     call initialize_serial
 
-    ; ====================================================
-    ; REAL MODE CHECK
-    ; ====================================================
-
-    mov ax, 0xB800
-    mov es, ax
-    mov word [es:0], 0x0F52       ; R
-
-    DEBUG_CHAR 'R'
+    ; Load the C kernel (LBA 1 onward) into physical address 0x10000.
+    mov si, disk_address_packet
+    mov dl, [boot_drive]
+    mov ah, 0x42
+    int 0x13
+    jc disk_error
 
     xor ax, ax
     mov ds, ax
@@ -87,6 +101,12 @@ start:
     mov ecx, (3 * 4096) / 4
     rep stosd
 
+    ; The 128 small-page tables occupy 512 KiB at 1 MiB, within the
+    ; reserved boot-memory range and away from the kernel and stack.
+    mov edi, LIBRARIAN_TABLES_ADDRESS
+    mov ecx, (LIBRARIAN_PAGE_TABLES * SMALL_PAGE_SIZE) / 4
+    rep stosd
+
 
     ; ====================================================
     ; PML4 -> PDPT
@@ -105,17 +125,44 @@ start:
     ; ====================================================
     ; PAGE DIRECTORY
     ;
-    ; Identity map first 4 MiB using two 2 MiB pages. This
-    ; includes the system entry point immediately after the
-    ; 2 MiB loading buffer.
+    ; Map the 8 MiB boot range with four 2 MiB pages.
     ;
     ; Present  = bit 0
     ; Writable = bit 1
     ; PS       = bit 7
     ; ====================================================
 
-    mov dword [PAGE_DIRECTORY_ADDRESS],     0x00000083
-    mov dword [PAGE_DIRECTORY_ADDRESS + 8], 0x00200083
+    mov edi, PAGE_DIRECTORY_ADDRESS
+    mov ecx, BOOT_HUGE_PAGE_COUNT
+    mov eax, 0x00000083
+
+.map_next_boot_page:
+    mov dword [edi], eax
+    add edi, 8
+    add eax, HUGE_PAGE_SIZE
+    loop .map_next_boot_page
+
+    ; Point the following 128 directory entries at Librarian's page tables.
+    mov ecx, LIBRARIAN_PAGE_TABLES
+    mov eax, LIBRARIAN_TABLES_ADDRESS | 0x03
+
+.map_next_librarian_table:
+    mov dword [edi], eax
+    add edi, 8
+    add eax, SMALL_PAGE_SIZE
+    loop .map_next_librarian_table
+
+    ; Identity map 8-264 MiB with 65,536 standard 4 KiB pages.
+    mov edi, LIBRARIAN_TABLES_ADDRESS
+    mov ecx, LIBRARIAN_SMALL_PAGES
+    mov eax, LIBRARIAN_MEMORY_BASE | 0x03
+
+.map_next_librarian_page:
+    mov dword [edi], eax
+    add edi, 8
+    add eax, SMALL_PAGE_SIZE
+    dec ecx
+    jnz .map_next_librarian_page
 
 
     ; ====================================================
@@ -193,6 +240,13 @@ initialize_serial:
     ret
 
 
+disk_error:
+    DEBUG_CHAR 'E'
+    cli
+    hlt
+    jmp disk_error
+
+
 ; ========================================================
 ; 32-BIT PROTECTED MODE
 ; ========================================================
@@ -205,15 +259,6 @@ protected:
     mov ds, ax
     mov es, ax
     mov ss, ax
-
-    ; ====================================================
-    ; PROTECTED MODE CHECK
-    ; ====================================================
-
-    mov dword [0xB8002], 0x0F500F50
-
-    DEBUG_CHAR 'P'
-
 
     ; ====================================================
     ; ENABLE PAGING
@@ -247,41 +292,21 @@ long_mode:
     mov rsp, STACK_TOP_ADDRESS
 
     ; ====================================================
-    ; LONG MODE CHECK
-    ; ====================================================
-
-    mov word [0xB8004], 0x0F4C       ; L
-
-    DEBUG_CHAR 'L'
-
-
-    ; ====================================================
-    ; PRINT KAON
-    ; ====================================================
-
-    mov rdi, 0xB8000
-
-    mov word [rdi + 10], 0x0F4B     ; K
-    mov word [rdi + 12], 0x0F41     ; A
-    mov word [rdi + 14], 0x0F4F     ; O
-    mov word [rdi + 16], 0x0F4E     ; N
-
-    DEBUG_CHAR 'K'
-    DEBUG_CHAR 'A'
-    DEBUG_CHAR 'O'
-    DEBUG_CHAR 'N'
-    DEBUG_CHAR 13
-    DEBUG_CHAR 10
-
-    ; ====================================================
     ; HAND OFF TO THE 64-BIT SYSTEM
     ; ====================================================
+
+    ; System V argument registers communicate the authoritative memory
+    ; layout to kernel_main through the assembly entry stub.
+    mov edi, BOOT_MEMORY_BASE
+    mov esi, BOOT_MEMORY_SIZE
+    mov edx, LIBRARIAN_MEMORY_BASE
+    mov ecx, LIBRARIAN_MEMORY_SIZE
 
     mov rax, [rel system_entry]
     jmp rax
 
 
-; Runtime-configurable entry point immediately after the 2 MiB buffer.
+; The kernel is linked at this physical address.
 system_entry:
     dq SYSTEM_START_ADDRESS
 
@@ -324,6 +349,22 @@ gdt_end:
 gdt_descriptor:
     dw gdt_end - gdt - 1
     dd gdt
+
+
+; ========================================================
+; BIOS EXTENDED-READ PACKET
+; ========================================================
+
+align 4
+disk_address_packet:
+    db 0x10, 0
+    dw KERNEL_SECTORS
+    dw 0x0000
+    dw SYSTEM_START_ADDRESS >> 4
+    dq 1
+
+boot_drive:
+    db 0
 
 
 ; ========================================================

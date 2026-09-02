@@ -1,0 +1,35 @@
+# Runtime logs
+qemu.log
+*.log
+
+# Compiler and linker intermediates
+*.o
+*.obj
+*.a
+*.so
+*.d
+*.map
+
+# Generated build directories
+build/
+out/
+
+# Archived and legacy project files stay local
+Old/
+**/Old/
+
+# Editor and operating-system metadata
+.DS_Store
+*~
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
